@@ -92,7 +92,7 @@ def extract_gpt(text: str, client) -> dict:
 # ── Gemini 1.5 Flash ──────────────────────────────────────────────────────
 def extract_gemini(text: str, client) -> dict:
     resp = client.models.generate_content(
-        model="gemini-1.5-flash",
+        model="gemini-2.5-flash",
         contents=SYSTEM_PROMPT + "\n\n" + make_user_prompt(text)
     )
     return parse_response(resp.text)
