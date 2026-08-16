@@ -2,7 +2,7 @@
 
 Code repository for: **"Extracting Symptoms from Colorectal Cancer Patients Using Large Language Models in MIMIC-IV Clinical Discharge Summaries: A Multi-Method Comparative Study"**
 
-Authors: Youran Lee, Ivo Dinov, Xiaosu Hu, Yun Kang
+Authors: Youran Lee, Ivo Dinov, Xiaosu Hu, Yun Jiang
 
 ---
 
