@@ -1,0 +1,16 @@
+# MIMIC-IV may not be redistributed (PhysioNet DUA).
+# Never commit note text or any derived file containing clinical narrative.
+data/
+results/
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db

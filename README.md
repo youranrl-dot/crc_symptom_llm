@@ -7,43 +7,45 @@ Code accompanying:
 > Lee Y, Dinov I, Hu X, Jiang Y.
 
 Extracts 46 cancer-related symptoms from the Chief Complaint / History of Present
-Illness sections of MIMIC-IV colorectal-cancer discharge notes, benchmarks four
+Illness sections of MIMIC-IV colorectal-cancer discharge notes, benchmarks the
 extraction methods against a manually adjudicated gold standard, and derives
-symptom clusters from the best-performing method.
+symptom clusters from the LLM-extracted symptoms.
 
 **Cohort:** 1,507 patients · 2,728 discharge notes · 46 symptoms
-**Gold standard:** 200 double-annotated notes (9,200 symptom–note pairs)
+**Gold standard:** 200 double-annotated, adjudicated notes (9,200 symptom–note pairs)
 
 ---
 
-## What is in this repository
+## Repository layout
 
-There are two independent tracks. Both are here; only the first is in the paper.
+```
+├── symptoms.json               canonical 46-symptom key list
+├── symptom_dict.py             keyword/synonym dictionary for the rule-based method
+├── system_prompt.txt           zero-shot LLM system prompt (46 labels + 20 coding rules)
+│
+├── 01_extract_crc_notes.py     MIMIC-IV -> CRC cohort + CC/HPI extraction
+├── 02_rule_based.py            rule-based baseline
+├── run_ner_scispacy.py         NER baseline (scispaCy en_ner_bc5cdr_md + negspaCy)
+├── 05_llm_extraction.py        LLM extraction driver
+├── run_hybrid.py               hybrid variants (LLM + rule-based negation filter)
+├── negation_filter_config.py   the filter's cue list, window, and trigger terms
+│
+├── compare_with_gold.py        benchmark vs gold -> Tables 2-3, Figure 1
+│
+├── analysis/                   the published analysis package
+├── run_analysis.py             full pipeline -> results/
+├── validate.py                 58 regression checks against the published numbers
+├── ANALYSIS.md                 module map + every operational definition
+│
+├── requirements.txt            extraction stage
+└── requirements-analysis.txt   analysis stage
+```
 
-### 1. Published pipeline — annotation + analysis
-
-| Stage | Files |
-|---|---|
-| Symptom schema & prompt | `symptoms.json`, `system_prompt.txt` |
-| Gold-standard input prep | `build_200_note_input.py` |
-| Baselines | `run_rule_based.py`, `run_ner_scispacy.py` |
-| Benchmarking vs gold | `compare_with_gold.py`, `validate_kappa.py` |
-| **Analysis pipeline** | **`analysis/`, `run_analysis.py`, `validate.py`** — see [ANALYSIS.md](ANALYSIS.md) |
-
-The two LLMs benchmarked in the manuscript are **Claude Haiku**
-(`claude-haiku-4-5-20251001`) and **Gemini 3.5 Flash** (`gemini-3.5-flash`),
-both applied zero-shot at `temperature=0.0` with the same system prompt and
-SYNONYM_GUIDE.
-
-### 2. Local open-weight track — Gemma via Ollama
-
-`annotate_ollama.py`, `run_200_note_ollama.py`
-
-An exploratory pipeline that runs the same prompt against a locally hosted Gemma
-model. **It is not one of the methods benchmarked in the manuscript.** It is kept
-because locally deployable open-weight models are the privacy-preserving
-alternative discussed in the Limitations, and because it is useful for anyone who
-cannot send clinical text to a hosted API. Results from it are not reported.
+An earlier numbered pipeline (`03_ner_based.py`, `04_evaluate.py`,
+`06_network_analysis.py`, `07_predictive_validity.py`) produced earlier versions of
+the reported numbers and has been removed; `analysis/`, `compare_with_gold.py`, and
+`run_ner_scispacy.py` replace it. Those files remain in the git history if the
+provenance of an earlier value is ever needed.
 
 ---
 
@@ -52,8 +54,8 @@ cannot send clinical text to a hosted API. Results from it are not reported.
 MIMIC-IV is **not** redistributed here. Access requires credentialing and a data
 use agreement with PhysioNet: <https://physionet.org/content/mimiciv/>
 
-`data/` and `output/` are gitignored. Do not commit note text, note IDs joined to
-text, or any derived file that contains clinical narrative — the DUA prohibits it.
+`data/`, `output/`, and `results/` are gitignored. Do not commit note text, or any
+derived file containing clinical narrative — the DUA prohibits it.
 
 Expected layout once you have access:
 
@@ -62,7 +64,7 @@ data/
 ├── admissions.csv                              # MIMIC-IV hosp module
 ├── patients.csv                                # MIMIC-IV hosp module
 ├── diagnoses_icd.csv                           # MIMIC-IV hosp module
-├── crc_discharge_cchpi.csv                     # derived: 2,728 notes + CC/HPI text
+├── crc_discharge_cchpi.csv                     # from 01_extract_crc_notes.py
 ├── preds_gemini_full.csv                       # note_id + 46 pred_* columns
 ├── predictions_claude_haiku_full.csv           # note_id + 46 pred_* columns
 └── 200_Note_Adjudication_Kappa_Results.xlsx    # 200-note double annotation
@@ -73,13 +75,25 @@ data/
 ## Quick start
 
 ```bash
-# analysis pipeline (tables, figures, models)
+# analysis stage — tables, figures, models
 pip install -r requirements-analysis.txt
-python run_analysis.py          # writes everything to results/
-python validate.py              # 52 regression checks against the published numbers
+python run_analysis.py     # writes every table and figure to results/
+python validate.py         # 58 regression checks
 
-# annotation pipeline
-pip install -r requirements.txt
+# hybrid variants, then the full six-method benchmark
+python run_hybrid.py --pred data/predictions_claude_haiku_full.csv \
+                     --out  data/preds_claude_hybrid.csv
+python run_hybrid.py --pred data/preds_gemini_full.csv \
+                     --out  data/preds_gemini_hybrid.csv
+
+python compare_with_gold.py \
+    --pred rule_based=data/preds_rule_based.csv \
+    --pred NER=data/preds_ner_scispacy.csv \
+    --pred claude=data/predictions_claude_haiku_full.csv \
+    --pred claude_hybrid=data/preds_claude_hybrid.csv \
+    --pred gemini=data/preds_gemini_full.csv \
+    --pred gemini_hybrid=data/preds_gemini_hybrid.csv \
+    --na-policy zero
 ```
 
 `validate.py` pins every value reported in the manuscript — cohort counts,
@@ -91,17 +105,18 @@ names the number. Run it before any commit that touches `analysis/`.
 
 ## The 46-symptom schema
 
-Derived by combining two validated instruments and de-duplicating:
+Built by combining two validated instruments and de-duplicating:
 
 * **MSAS** — Memorial Symptom Assessment Scale (Portenoy et al., 1994)
 * **EORTC QLQ-CR29** — colorectal module (Whistance et al., 2009)
 
 `symptoms.json` holds the canonical key list. Those keys are the contract across
-the whole repository: they are the JSON keys the models must emit, the `label_*`
-columns of the adjudicated gold standard, and the `pred_*` columns of every
-prediction file. Do not rename one without renaming all three.
+the whole repository: the JSON keys the models must emit, the `label_*` columns
+of the adjudicated gold standard, and the `pred_*` columns of every prediction
+file. Renaming one without the other two silently breaks the benchmark, so
+`compare_with_gold.py` treats any mismatch as a hard error.
 
-`system_prompt.txt` holds the system prompt, including the 20 coding rules
+`system_prompt.txt` holds the zero-shot prompt, including the 20 coding rules
 developed during pilot human-in-the-loop annotation. Those rules are the
 substantive part — they resolve the ambiguous cases that recur in this note set
 (negation scope, altered mental status mapping, diagnosis-to-symptom inference,
@@ -114,21 +129,19 @@ temporal scope).
 | Method | Approach |
 |---|---|
 | Rule-based | curated synonym dictionary + 80-character negation window |
-| NER | `samrawal/bert-base-uncased_clinical-ner` via spaCy EntityRuler, mapped to the 46-symptom inventory |
+| NER | scispaCy `en_ner_bc5cdr_md` DISEASE entities, negated spans dropped with negspaCy ConText, mapped to the 46-symptom inventory |
 | Claude Haiku | zero-shot, structured JSON, `temperature=0.0` |
 | Gemini 3.5 Flash | identical protocol; CC/HPI truncated to 2,500 characters |
 | + Hybrid variants | post-hoc rule-based negation filtering applied to each LLM's output |
 
-Headline result: Gemini 3.5 Flash reached the highest Macro F1 (0.70), followed
-by Claude Haiku (0.63); rule-based (0.44) and NER (0.38) trailed. The hybrid
-variants **degraded** performance — a fixed 100-character negation window
-overrides correct LLM predictions on constructions like *"no relief from
-nausea"*. Reported as a negative finding; do not apply post-hoc negation
+The hybrid variants **degraded** performance — a fixed 100-character negation
+window overrides correct LLM predictions on constructions like *"no relief from
+nausea"*. Reported as a negative finding: do not apply post-hoc negation
 filtering to LLM output without syntactic scope validation.
 
 ---
 
-## Reproducing the results
+## Reproducing the analysis
 
 See [**ANALYSIS.md**](ANALYSIS.md) for the module map, every operational
 definition, and the output manifest. The definitions that most affect the numbers:
@@ -144,19 +157,42 @@ definition, and the output manifest. The definitions that most affect the number
 
 ---
 
-## Known issues in this repository
+## Known issues
 
-Tracked openly so nobody builds on a stale artefact:
+Tracked openly so nobody builds on a stale artefact.
 
-1. **`compare_with_gold.py` uses a stale label mapping.** Its alias table lists
-   symptoms that are not in the 46-symptom inventory (`fever`, `chills`,
-   `chest_pain`, `rash`, `early_satiety`, `facial_flushing`) and covers only 27
-   labels. Use `validate_kappa.py`, or the `analysis/irr.py` module, until it is
-   rewritten against the canonical `symptoms.json`.
-2. **Prompt-token accounting is not recorded.** API cost and rate-limit figures
-   are not yet in the repository or the Supplementary Materials.
+**1. Superseded scripts were removed.** The earlier numbered pipeline scored
+against the 1,000-note annotation file rather than the 200-note adjudicated gold
+standard, evaluated 41 of the 46 symptoms, used a keyword matcher labelled as NER,
+and predates the outcome-definition fixes documented in ANALYSIS.md. It was removed
+rather than kept alongside the current code so that no one runs it by mistake; it
+is recoverable from the git history.
 
----
+**2. Hard-coded absolute paths.** `01`, `02`, and `05` contain absolute paths from
+the machine they were developed on. They will not run elsewhere until those are
+parameterised.
+
+**3. `05_llm_extraction.py` names different models than the manuscript.** Its
+docstring lists Claude Haiku / GPT-4o mini / Gemini 1.5 Flash; the manuscript
+benchmarks Claude Haiku (`claude-haiku-4-5-20251001`) and Gemini 3.5 Flash
+(`gemini-3.5-flash`), and does not report a GPT model.
+
+**4. Two Gemini inference runs exist and they disagree.** A 200-note prediction
+file and the 2,728-note file, produced by separate runs, disagree on **93 of 9,200
+labels (1.0%)** for the notes they share. The manuscript reports the 2,728-note
+run — the one the clusters were derived from. This is the `temperature=0.0`
+non-determinism the Limitations section anticipates.
+
+**5. 18 notes have no predictions in the Claude output** (`error=missing_cc_hpi`,
+all 46 labels null). One is in the 200-note gold set; the published confusion
+matrix counts it as all true negatives, which `--na-policy zero` reproduces. The
+default policy is `error`, so this cannot pass unnoticed again.
+
+**6. Earlier NER and hybrid results could not be reproduced and were regenerated.**
+No saved prediction file reproduced the previously reported NER or hybrid rows, and
+the scripts that produced them were not preserved. Both were re-run from the code
+in this repository and the manuscript now reports those values. The conclusions are
+unchanged; the hybrid penalty is slightly larger than previously reported.
 
 ## Citation
 
@@ -177,5 +213,5 @@ MIMIC-IV: Johnson AEW, Bulgarelli L, Shen L, et al. *Sci Data*. 2023;10(1):1.
 ## License and use
 
 Code is released for academic reuse. Any use of MIMIC-IV remains governed by the
-PhysioNet data use agreement. This repository is research code for retrospective
-analysis; it is not validated for clinical decision-making.
+PhysioNet data use agreement. This is research code for retrospective analysis;
+it is not validated for clinical decision-making.
